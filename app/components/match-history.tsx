@@ -19,6 +19,7 @@ import {
 	getMatchInfo,
 	getPlayerMatchResult,
 } from "../lib/riot-api";
+import { ImageTile } from "../lib/images";
 
 const PLACEMENT_COLORS = {
 	1: "bg-yellow-500 dark:bg-yellow-600",
@@ -31,7 +32,11 @@ const PLACEMENT_COLORS = {
 	8: "bg-gray-400 dark:bg-gray-700",
 } as const;
 
-export function MatchHistory() {
+interface MatchHistoryProps {
+	images: ImageTile[];
+}
+
+export function MatchHistory({ images }: MatchHistoryProps) {
 	const [gameName, setGameName] = useState("");
 	const [tagLine, setTagLine] = useState("");
 	const [matchHistory, setMatchHistoryState] = useState<MatchResult[]>([]);
@@ -243,7 +248,7 @@ export function MatchHistory() {
 							<div className="flex items-center gap-4">
 								<div className="relative w-16 h-16 flex-shrink-0">
 									<Image
-										src={`/tiles_base/${match.champion}.jpg`}
+										src={images.find((image) => image.name === match.champion)?.src || ""}
 										alt={match.champion}
 										fill
 										className="object-cover rounded-lg"

@@ -59,13 +59,13 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 					: -1;
 			}
 			// If both are in the same group (both completed or both incomplete),
-			// sort alphabetically
-			return a.name.localeCompare(b.name);
+			// sort alphabetically by display name
+			return a.displayName.localeCompare(b.displayName);
 		}
 		// For alphabetical mode, just sort by name
 		return sortDirection === "asc"
-			? a.name.localeCompare(b.name)
-			: b.name.localeCompare(a.name);
+			? a.displayName.localeCompare(b.displayName)
+			: b.displayName.localeCompare(a.displayName);
 	});
 
 	if (!mounted) {
@@ -137,7 +137,7 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 							>
 								<Image
 									src={image.src}
-									alt={image.name}
+									alt={image.displayName}
 									fill
 									className={`object-cover rounded-lg ${
 										isCompleted
@@ -188,7 +188,7 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 								</div>
 							</button>
 							<span className="text-sm text-center font-medium">
-								{image.name}
+								{image.displayName}
 							</span>
 						</div>
 					);

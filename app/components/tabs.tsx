@@ -13,8 +13,10 @@ export function Tabs({ images }: TabsProps) {
 	const [activeTab, setActiveTab] = useState("tracker");
 	const [searchQuery, setSearchQuery] = useState("");
 
+	const lower = searchQuery.toLowerCase();
 	const filteredImages = images.filter((image) =>
-		image.name.toLowerCase().includes(searchQuery.toLowerCase())
+		image.name.toLowerCase().includes(lower) ||
+		image.displayName.toLowerCase().includes(lower)
 	);
 
 	return (
@@ -59,7 +61,7 @@ export function Tabs({ images }: TabsProps) {
 				{activeTab === "tracker" ? (
 					<ImageGrid images={images} displayImages={filteredImages} />
 				) : (
-					<MatchHistory />
+					<MatchHistory images={images} />
 				)}
 			</div>
 		</div>

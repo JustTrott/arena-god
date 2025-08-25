@@ -39,6 +39,7 @@ interface MatchHistoryProps {
 export function MatchHistory({ images }: MatchHistoryProps) {
 	const [gameName, setGameName] = useState("");
 	const [tagLine, setTagLine] = useState("");
+	const [tagLinePrefixActive, setTagLinePrefixActive] = useState(false);
 	const [matchHistory, setMatchHistoryState] = useState<MatchResult[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 		if (storedRiotId) {
 			setGameName(storedRiotId.gameName);
 			setTagLine(storedRiotId.tagLine);
+			setTagLinePrefixActive(Boolean(storedRiotId.tagLine));
 		}
 		setMatchHistoryState(getMatchHistory());
 	}, []);
@@ -209,14 +211,31 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 					>
 						Tag Line
 					</label>
-					<input
-						type="text"
-						id="tagLine"
-						value={tagLine}
-						onChange={(e) => setTagLine(e.target.value)}
-						className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-						placeholder="Enter tag line"
-					/>
+					<div className="relative">
+						<span
+							className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 ${
+								tagLinePrefixActive
+									? "text-gray-900 dark:text-gray-100"
+									: "text-gray-400 dark:text-gray-500"
+							}`}
+							aria-hidden="true"
+						>
+							#
+						</span>
+						<input
+							type="text"
+							id="tagLine"
+							value={tagLine}
+							onChange={(e) => {
+								const raw = e.target.value;
+								setTagLinePrefixActive(raw.length > 0 || raw.includes("#"));
+								const sanitized = raw.replaceAll("#", "");
+								setTagLine(sanitized);
+							}}
+							className="w-full pl-7 pr-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
+							placeholder="Enter tag line"
+						/>
+					</div>
 				</div>
 				<button
 					onClick={handleUpdate}

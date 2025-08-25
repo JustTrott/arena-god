@@ -139,6 +139,7 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 									src={image.src}
 									alt={image.displayName}
 									fill
+									priority
 									className={`object-cover rounded-lg ${
 										isCompleted
 											? "opacity-100"

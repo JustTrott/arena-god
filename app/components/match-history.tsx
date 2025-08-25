@@ -270,6 +270,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 										src={images.find((image) => image.name === match.champion)?.src || ""}
 										alt={match.champion}
 										fill
+										priority
 										className="object-cover rounded-lg"
 										sizes="64px"
 									/>

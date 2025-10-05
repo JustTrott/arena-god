@@ -54,7 +54,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 		setMatchHistoryState(getMatchHistory());
 	}, []);
 
-	const handleUpdate = async () => {
+const handleUpdate = async () => {
 		if (!gameName || !tagLine) {
 			setError("Please enter both game name and tag line");
 			return;
@@ -65,11 +65,22 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 
 		try {
 			const account = await getRiotAccount(gameName, tagLine);
-			if ("error" in account && account.error) {
+			if (
+				account &&
+				typeof account === "object" &&
+				"error" in account &&
+				(account as { error?: unknown }).error
+			) {
+				const errorValue = (account as { error?: unknown }).error;
 				setError(
-					typeof account.error === "string"
-						? account.error
-						: account.error.status.message
+					typeof errorValue === "string"
+						? errorValue
+						: (typeof errorValue === "object" &&
+							errorValue !== null &&
+							"status" in errorValue &&
+							typeof (errorValue as any).status?.message === "string")
+							? (errorValue as { status?: { message?: string } }).status?.message ?? "Unknown error"
+							: "Unknown error"
 				);
 				return;
 			}
@@ -87,7 +98,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 
 			const matchIds = await getMatchIds(account.data.puuid);
 			if ("error" in matchIds) {
-				setError(matchIds.error || "Failed to fetch match IDs");
+				setError(typeof matchIds.error === "string" ? matchIds.error : "Failed to fetch match IDs");
 				return;
 			}
 
@@ -183,7 +194,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 		} finally {
 			setIsLoading(false);
 		}
-	};
+};
 
 	return (
 		<div className="space-y-6">

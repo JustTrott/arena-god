@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const RIOT_API_BASE = "https://europe.api.riotgames.com";
+const RIOT_API_REGIONS = {
+	europe: "https://europe.api.riotgames.com",
+	americas: "https://americas.api.riotgames.com",
+	asia: "https://asia.api.riotgames.com",
+	sea: "https://sea.api.riotgames.com",
+} as const;
+
 const RIOT_TOKEN = process.env.RIOT_API_TOKEN;
 
 if (!RIOT_TOKEN) {
@@ -18,6 +24,7 @@ export async function GET(request: NextRequest) {
 	const tagLine = searchParams.get("tagLine");
 	const puuid = searchParams.get("puuid");
 	const matchId = searchParams.get("matchId");
+	const region = searchParams.get("region") || "americas"; // Default to Americas
 
 	if (!endpoint) {
 		return NextResponse.json(
@@ -25,6 +32,8 @@ export async function GET(request: NextRequest) {
 			{ status: 400 }
 		);
 	}
+
+	const RIOT_API_BASE = RIOT_API_REGIONS[region as keyof typeof RIOT_API_REGIONS] || RIOT_API_REGIONS.americas;
 
 	try {
 		let url = "";
@@ -46,7 +55,9 @@ export async function GET(request: NextRequest) {
 						{ status: 400 }
 					);
 				}
-				url = `${RIOT_API_BASE}/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=1700&start=0&count=40`;
+				const queue = searchParams.get("queue");
+				const queueParam = queue ? `&queue=${queue}` : "";
+				url = `${RIOT_API_BASE}/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=20${queueParam}`;
 				break;
 
 			case "match":

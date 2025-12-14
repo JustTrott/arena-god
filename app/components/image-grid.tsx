@@ -186,6 +186,15 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 									>
 										metasrc
 									</a>
+									<a
+										href={`https://op.gg/lol/modes/arena/${image.name.toLowerCase()}/build`}
+										target="_blank"
+										rel="noopener noreferrer"
+										onClick={(e) => e.stopPropagation()}
+										className="px-2 py-0.5 text-xs font-medium bg-blue-500/90 text-white rounded-full hover:bg-blue-600 transition-colors shadow-sm ring-1 ring-blue-600/50"
+									>
+										op.gg
+									</a>
 								</div>
 							</button>
 							<span className="text-sm text-center font-medium">

@@ -34,48 +34,99 @@ export type MatchInfo = z.infer<typeof MatchInfoSchema>;
 
 // Server Actions
 export async function getRiotAccount(gameName: string, tagLine: string) {
-	try {
-		const response = await fetch(
-			`/api/riot?endpoint=account&gameName=${encodeURIComponent(
-				gameName
-			)}&tagLine=${encodeURIComponent(tagLine)}`
-		);
+	// Try all regions for account lookup
+	const regions = ["americas", "europe", "asia", "sea"];
 
-		const data = await response.json();
+	for (const region of regions) {
+		try {
+			const response = await fetch(
+				`/api/riot?endpoint=account&gameName=${encodeURIComponent(
+					gameName
+				)}&tagLine=${encodeURIComponent(tagLine)}&region=${region}`
+			);
 
-		if (response.status === 404) {
-			return { error: RiotErrorSchema.parse(data) };
+			const data = await response.json();
+
+			if (response.ok) {
+				return { data: RiotAccountSchema.parse(data) };
+			}
+		} catch (error) {
+			console.log(`Failed to find account in region: ${region}`);
 		}
-
-		return { data: RiotAccountSchema.parse(data) };
-	} catch (error) {
-		console.error("Error fetching Riot account:", error);
-		return { error: "Failed to fetch Riot account" };
 	}
+
+	return { error: "Account not found in any region" };
 }
 
 export async function getMatchIds(puuid: string) {
-	try {
-		const response = await fetch(
-			`/api/riot?endpoint=matches&puuid=${encodeURIComponent(puuid)}`
-		);
+	// Try all regions for match lookup
+	const regions = ["americas", "europe", "asia", "sea"];
 
-		if (!response.ok) {
-			throw new Error(`HTTP error! status: ${response.status}`);
+	for (const region of regions) {
+		try {
+			const response = await fetch(
+				`/api/riot?endpoint=matches&puuid=${encodeURIComponent(puuid)}&region=${region}&queue=1700`
+			);
+
+			if (!response.ok) {
+				continue; // Try next region
+			}
+
+			const data = await response.json();
+			const matches = z.array(z.string()).parse(data);
+
+			// If we found matches, return them
+			if (matches.length > 0) {
+				console.log(`Found matches in region: ${region}`);
+				return { data: matches };
+			}
+		} catch (error) {
+			console.log(`Failed to fetch matches from region: ${region}`);
 		}
-
-		const data = await response.json();
-		return { data: z.array(z.string()).parse(data) };
-	} catch (error) {
-		console.error("Error fetching match IDs:", error);
-		return { error: "Failed to fetch match IDs" };
 	}
+
+	return { data: [] }; // No matches found in any region
+}
+
+// Helper function to determine region from matchId
+function getRegionFromMatchId(matchId: string): string {
+	const prefix = matchId.split('_')[0];
+
+	// Map match prefixes to API regions
+	const regionMap: Record<string, string> = {
+		// Americas
+		'NA1': 'americas',
+		'BR1': 'americas',
+		'LA1': 'americas', // LAS (Latin America South)
+		'LA2': 'americas', // LAN (Latin America North)
+
+		// Europe
+		'EUW1': 'europe',
+		'EUN1': 'europe',
+		'TR1': 'europe',
+		'RU1': 'europe',
+
+		// Asia
+		'KR': 'asia',
+		'JP1': 'asia',
+
+		// SEA (Southeast Asia)
+		'OC1': 'sea',
+		'PH2': 'sea',
+		'SG2': 'sea',
+		'TH2': 'sea',
+		'TW2': 'sea',
+		'VN2': 'sea',
+	};
+
+	return regionMap[prefix] || 'americas'; // Default to americas
 }
 
 export async function getMatchInfo(matchId: string) {
 	try {
+		const region = getRegionFromMatchId(matchId);
 		const response = await fetch(
-			`/api/riot?endpoint=match&matchId=${encodeURIComponent(matchId)}`
+			`/api/riot?endpoint=match&matchId=${encodeURIComponent(matchId)}&region=${region}`
 		);
 
 		if (!response.ok) {

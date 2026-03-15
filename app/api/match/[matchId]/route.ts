@@ -29,13 +29,11 @@ async function getMatchInfo(matchId: string, region?: string) {
 		if (response.ok) {
 			return { success: true, data, region };
 		}
-		console.log(`[API] Failed to fetch match ${matchId} from known region ${region}: ${response.status}`);
 		return { success: false, error: `Failed to fetch match info: ${response.status}` };
 	}
 
 	// Otherwise, try all regions to find the correct one
 	const regions = ["americas", "europe", "asia", "sea"];
-	console.log(`[API] Trying all regions for match ${matchId}...`);
 	
 	for (const testRegion of regions) {
 		const RIOT_API_BASE = RIOT_API_REGIONS[testRegion as keyof typeof RIOT_API_REGIONS];
@@ -45,18 +43,15 @@ async function getMatchInfo(matchId: string, region?: string) {
 		const data = await response.json();
 
 		if (response.ok) {
-			console.log(`[API] Found match ${matchId} in region: ${testRegion}`);
 			return { success: true, data, region: testRegion };
 		}
 		
 		// If not 404, it's a different error (rate limit, etc.) - continue trying other regions
 		if (response.status !== 404) {
-			console.log(`[API] Non-404 error fetching match ${matchId} from ${testRegion}: ${response.status}, trying next region...`);
 			// Continue to next region instead of returning error immediately
 		}
 	}
 
-	console.log(`[API] Match ${matchId} not found in any region (all returned 404)`);
 	return { success: false, error: "Match not found in any region" };
 }
 

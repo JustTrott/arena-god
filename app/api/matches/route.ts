@@ -17,18 +17,35 @@ const headers = {
 	"X-Riot-Token": RIOT_TOKEN,
 };
 
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1200; // Riot limit: 100 requests per 2 minutes = 1 per 1.2s
+const MAX_DELAY_MS = 5000;
+
+function sleep(ms: number) {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function getAccount(gameName: string, tagLine: string) {
 	const region = "europe";
 	const RIOT_API_BASE = RIOT_API_REGIONS[region];
 	const url = `${RIOT_API_BASE}/riot/account/v1/accounts/by-riot-id/${gameName}/${tagLine}`;
-	
-	const response = await fetch(url, { headers });
-	const data = await response.json();
 
-	if (response.ok) {
-		return { success: true, data };
+	for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+		const response = await fetch(url, { headers });
+
+		if (response.status === 429) {
+			const retryAfter = parseInt(response.headers.get("Retry-After") || "2", 10);
+			await sleep(retryAfter * 1000 * (attempt + 1));
+			continue;
+		}
+
+		const data = await response.json();
+		if (response.ok) {
+			return { success: true, data };
+		}
+		return { success: false, error: data.error || "Account not found" };
 	}
-	return { success: false, error: data.error || "Account not found" };
+	return { success: false, error: "Rate limited — please wait a moment and try again" };
 }
 
 async function getMatchIds(puuid: string, start: number = 0, count: number = 100) {
@@ -40,24 +57,19 @@ async function getMatchIds(puuid: string, start: number = 0, count: number = 100
 		try {
 			const RIOT_API_BASE = RIOT_API_REGIONS[region as keyof typeof RIOT_API_REGIONS];
 			const url = `${RIOT_API_BASE}/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${queue}&start=${start}&count=${count}`;
-			
+
 			const response = await fetch(url, { headers });
 
 			if (response.ok) {
 				const data = await response.json();
 				if (Array.isArray(data)) {
-					// If we found matches, return immediately
 					if (data.length > 0) {
-						console.log(`[API] matches - Found ${data.length} matches in region: ${region}`);
 						return { success: true, data, region };
 					}
-					// Empty array - continue to next region
-					console.log(`[API] matches - Empty array in region: ${region}, trying next region...`);
 					continue;
 				}
 			}
 
-			// Track error but continue to next region
 			try {
 				const errorData = await response.json();
 				lastError = {
@@ -72,24 +84,17 @@ async function getMatchIds(puuid: string, start: number = 0, count: number = 100
 					message: `HTTP ${response.status}`,
 				};
 			}
-			console.log(`[API] matches - Error in region ${region}: ${response.status}, trying next region...`);
 		} catch (error) {
-			console.log(`[API] matches - Exception in region: ${region}`, error);
 			lastError = {
 				message: error instanceof Error ? error.message : "Network error",
 			};
 		}
 	}
 
-	// If we got here, all regions returned empty arrays or errors
-	// If all were empty arrays (no errors), return empty array
 	if (!lastError) {
-		console.log(`[API] matches - All regions returned empty arrays`);
 		return { success: true, data: [], region: null };
 	}
 
-	// If we had errors, return the error
-	console.log(`[API] matches - All regions failed`);
 	const errorMessage = lastError.status
 		? `Failed to fetch matches (${lastError.status}${lastError.message ? `: ${lastError.message}` : ""})`
 		: lastError.message || "Failed to fetch matches from all regions";
@@ -109,47 +114,71 @@ interface MatchData {
 	};
 }
 
-async function getMatchInfo(matchId: string, region?: string): Promise<{ success: true; data: MatchData; region: string } | { success: false; error: string }> {
-	// If region is provided, use it directly (for subsequent matches after we've detected the region)
+type MatchInfoResult =
+	| { success: true; data: MatchData; region: string; wasRateLimited: boolean }
+	| { success: false; error: string; wasRateLimited: boolean };
+
+async function fetchMatchFromRegion(matchId: string, region: string): Promise<{ ok: boolean; status: number; data?: MatchData; retryAfter?: number }> {
+	const RIOT_API_BASE = RIOT_API_REGIONS[region as keyof typeof RIOT_API_REGIONS];
+	const url = `${RIOT_API_BASE}/lol/match/v5/matches/${matchId}`;
+
+	const response = await fetch(url, { headers });
+
+	if (response.ok) {
+		const data = await response.json();
+		return { ok: true, status: 200, data };
+	}
+
+	if (response.status === 429) {
+		const retryAfter = parseInt(response.headers.get("Retry-After") || "1", 10);
+		return { ok: false, status: 429, retryAfter };
+	}
+
+	return { ok: false, status: response.status };
+}
+
+async function getMatchInfo(matchId: string, region?: string): Promise<MatchInfoResult> {
+	let wasRateLimited = false;
+
 	if (region) {
-		const RIOT_API_BASE = RIOT_API_REGIONS[region as keyof typeof RIOT_API_REGIONS];
-		const url = `${RIOT_API_BASE}/lol/match/v5/matches/${matchId}`;
-		
-		const response = await fetch(url, { headers });
-		const data = await response.json();
-
-		if (response.ok) {
-			return { success: true, data, region };
+		for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+			const result = await fetchMatchFromRegion(matchId, region);
+			if (result.ok && result.data) {
+				return { success: true, data: result.data, region, wasRateLimited };
+			}
+			if (result.status === 429) {
+				wasRateLimited = true;
+				const waitTime = (result.retryAfter || 1) * 1000 * (attempt + 1);
+				await sleep(waitTime);
+				continue;
+			}
+			return { success: false, error: `Failed to fetch match info: ${result.status}`, wasRateLimited };
 		}
-		console.log(`[API] Failed to fetch match ${matchId} from known region ${region}: ${response.status}`);
-		return { success: false, error: `Failed to fetch match info: ${response.status}` };
+		return { success: false, error: "Max retries exceeded (rate limited)", wasRateLimited: true };
 	}
 
-	// Otherwise, try all regions to find the correct one (for the first match)
+	// Try all regions for first match
 	const regions = ["americas", "europe", "asia", "sea"];
-	console.log(`[API] Trying all regions for match ${matchId}...`);
-	
 	for (const testRegion of regions) {
-		const RIOT_API_BASE = RIOT_API_REGIONS[testRegion as keyof typeof RIOT_API_REGIONS];
-		const url = `${RIOT_API_BASE}/lol/match/v5/matches/${matchId}`;
-		
-		const response = await fetch(url, { headers });
-		const data = await response.json();
-
-		if (response.ok) {
-			console.log(`[API] Found match ${matchId} in region: ${testRegion}`);
-			return { success: true, data, region: testRegion };
-		}
-		
-		// If not 404, it's a different error (rate limit, etc.) - continue trying other regions
-		if (response.status !== 404) {
-			console.log(`[API] Non-404 error fetching match ${matchId} from ${testRegion}: ${response.status}, trying next region...`);
-			// Continue to next region instead of returning error immediately
+		for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+			const result = await fetchMatchFromRegion(matchId, testRegion);
+			if (result.ok && result.data) {
+				return { success: true, data: result.data, region: testRegion, wasRateLimited };
+			}
+			if (result.status === 429) {
+				wasRateLimited = true;
+				const waitTime = (result.retryAfter || 1) * 1000 * (attempt + 1);
+				await sleep(waitTime);
+				continue;
+			}
+			if (result.status === 404) {
+				break; // Try next region
+			}
+			break; // Other error, try next region
 		}
 	}
 
-	console.log(`[API] Match ${matchId} not found in any region (all returned 404)`);
-	return { success: false, error: "Match not found in any region" };
+	return { success: false, error: "Match not found in any region", wasRateLimited };
 }
 
 export async function GET(request: NextRequest) {
@@ -158,7 +187,6 @@ export async function GET(request: NextRequest) {
 	const tagLine = searchParams.get("tagLine");
 	const start = parseInt(searchParams.get("start") || "0", 10);
 	const count = parseInt(searchParams.get("count") || "100", 10);
-	const knownMatchIdsParam = searchParams.get("knownMatchIds") || "";
 	const cachedMatchIdsParam = searchParams.get("cachedMatchIds") || "";
 
 	if (!gameName || !tagLine) {
@@ -171,18 +199,15 @@ export async function GET(request: NextRequest) {
 		);
 	}
 
-	// Parse known and cached match IDs
-	const knownMatchIds = knownMatchIdsParam ? knownMatchIdsParam.split(",").filter(Boolean) : [];
 	const cachedMatchIds = cachedMatchIdsParam ? cachedMatchIdsParam.split(",").filter(Boolean) : [];
+	const cachedSet = new Set(cachedMatchIds);
 
-	// Create a readable stream for Server-Sent Events
 	const stream = new ReadableStream({
 		async start(controller) {
 			const encoder = new TextEncoder();
 
 			const sendEvent = (type: string, data: Record<string, unknown>) => {
 				const message = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
-				console.log(`[API] Sending SSE event: ${type}`, type === "match" ? { matchId: data.matchId, champion: data.champion, placement: data.placement } : data);
 				controller.enqueue(encoder.encode(message));
 			};
 
@@ -190,7 +215,7 @@ export async function GET(request: NextRequest) {
 				// Step 1: Get account
 				sendEvent("status", { message: "Looking up account..." });
 				const accountResult = await getAccount(gameName, tagLine);
-				
+
 				if (!accountResult.success) {
 					sendEvent("error", { error: accountResult.error });
 					controller.close();
@@ -199,52 +224,36 @@ export async function GET(request: NextRequest) {
 
 				sendEvent("account", { data: accountResult.data });
 
-				// Step 2: Fetch ALL match IDs in batches of 100 until we hit known ones or reach the end
+				// Step 2: Fetch ALL match IDs
 				sendEvent("status", { message: "Fetching match IDs..." });
-				
+
 				const allMatchIds: string[] = [];
 				let currentStart = start;
 				let hasMore = true;
 				let batchNumber = 0;
-				let detectedRegion: string | undefined = undefined;
 
 				while (hasMore) {
 					const matchIdsResult = await getMatchIds(accountResult.data.puuid, currentStart, count);
-					
+
 					if (!matchIdsResult.success || !matchIdsResult.data) {
 						if (allMatchIds.length === 0) {
 							sendEvent("error", { error: matchIdsResult.error || "Failed to fetch matches" });
 							controller.close();
 							return;
 						}
-						// If we already have some matches, break and continue with what we have
 						break;
 					}
 
 					const batchMatchIds = matchIdsResult.data;
-					
-					// Check if any of these IDs are already known
-					const newIds = batchMatchIds.filter(id => !knownMatchIds.includes(id));
-					
-					if (newIds.length < batchMatchIds.length) {
-						// We hit known matches, only add the new ones and stop
-						allMatchIds.push(...newIds);
+					allMatchIds.push(...batchMatchIds);
+
+					if (batchMatchIds.length < count) {
 						hasMore = false;
-						console.log(`[API] Hit known matches at batch ${batchNumber + 1}, found ${newIds.length} new matches`);
-					} else if (batchMatchIds.length < count) {
-						// Reached the end (got fewer than requested)
-						allMatchIds.push(...batchMatchIds);
-						hasMore = false;
-						console.log(`[API] Reached end at batch ${batchNumber + 1}, got ${batchMatchIds.length} matches`);
 					} else {
-						// Keep going
-						allMatchIds.push(...batchMatchIds);
 						currentStart += count;
 						batchNumber++;
-						console.log(`[API] Batch ${batchNumber}: fetched ${batchMatchIds.length} matches, continuing...`);
 					}
 
-					// Send batch event
 					sendEvent("matchIdBatch", {
 						matchIds: batchMatchIds,
 						batchNumber: batchNumber + 1,
@@ -261,12 +270,11 @@ export async function GET(request: NextRequest) {
 				}
 
 				// Step 3: Filter to only fetch details for uncached matches
-				const matchIdsNeedingDetails = allMatchIds.filter(id => !cachedMatchIds.includes(id));
-				const totalNeedingDetails = matchIdsNeedingDetails.length;
-				const alreadyCached = allMatchIds.length - totalNeedingDetails;
+				const matchIdsNeedingDetails = allMatchIds.filter(id => !cachedSet.has(id));
+				const alreadyCached = allMatchIds.length - matchIdsNeedingDetails.length;
 
 				if (alreadyCached > 0) {
-					sendEvent("status", { message: `Skipping ${alreadyCached} already cached matches...` });
+					sendEvent("status", { message: `${alreadyCached} matches cached, fetching ${matchIdsNeedingDetails.length} remaining...` });
 				}
 
 				if (matchIdsNeedingDetails.length === 0) {
@@ -276,42 +284,40 @@ export async function GET(request: NextRequest) {
 					return;
 				}
 
-				// Step 4: Stream match details one by one for uncached matches
-				sendEvent("status", { message: `Fetching ${matchIdsNeedingDetails.length} match details...` });
-				
+				// Step 4: Stream match details with adaptive rate limiting
 				let detailsFetched = 0;
-				
+				let detectedRegion: string | undefined = undefined;
+				let currentDelay = BASE_DELAY_MS;
+				const fetchStartTime = Date.now();
+
 				for (let i = 0; i < matchIdsNeedingDetails.length; i++) {
 					const matchId = matchIdsNeedingDetails[i];
-					sendEvent("status", { message: `Fetching match ${i + 1}/${matchIdsNeedingDetails.length}...` });
-					
-					// Send progress update
+
+					// Calculate ETA based on average time per match so far
+					const elapsed = Date.now() - fetchStartTime;
+					const avgTimePerMatch = i > 0 ? elapsed / i : currentDelay;
+					const remaining = matchIdsNeedingDetails.length - i;
+					const etaMs = Math.round(avgTimePerMatch * remaining);
+
 					sendEvent("progress", {
 						totalIds: allMatchIds.length,
-						detailsFetched: detailsFetched,
-						pending: matchIdsNeedingDetails.length - i,
+						detailsFetched,
+						pending: remaining,
+						etaMs,
 					});
-					
-					// For the first match, try all regions. For subsequent matches, use the detected region
+
 					const matchResult = await getMatchInfo(matchId, detectedRegion);
-					console.log(`[API] Match ${i + 1}/${matchIdsNeedingDetails.length} (${matchId}): success=${matchResult.success}`);
-					
+
 					if (matchResult.success) {
-						// Store the region from the first successful match
 						if (!detectedRegion && matchResult.region) {
 							detectedRegion = matchResult.region;
-							console.log(`[API] Detected region for matches: ${detectedRegion}`);
 						}
-						
-						// Extract player's result from match
+
 						const player = matchResult.data.info.participants.find(
-							(p: { puuid: string; championName: string; placement: number }) => p.puuid === accountResult.data.puuid
+							(p: { puuid: string }) => p.puuid === accountResult.data.puuid
 						);
-						
-						console.log(`[API] Match ${i + 1}: player found=${!!player}, participants count=${matchResult.data.info.participants.length}`);
-						
+
 						if (player) {
-							// Extract only minimal data for caching
 							const minimalMatchInfo: MatchData = {
 								info: {
 									gameStartTimestamp: matchResult.data.info.gameStartTimestamp,
@@ -324,33 +330,33 @@ export async function GET(request: NextRequest) {
 									})),
 								},
 							};
-							const matchData = {
+							sendEvent("match", {
 								matchId,
 								champion: player.championName,
 								placement: player.placement,
 								matchInfo: minimalMatchInfo,
-							};
-							console.log(`[API] Sending match event:`, { matchId, champion: player.championName, placement: player.placement });
-							sendEvent("match", matchData);
+							});
 							detailsFetched++;
-						} else {
-							console.log(`[API] Match ${i + 1}: Player not found in participants. PUUID: ${accountResult.data.puuid.substring(0, 8)}...`);
 						}
-					} else {
-						console.log(`[API] Match ${i + 1}: Failed to fetch match info`);
 					}
 
-					// Small delay to avoid rate limiting
+					// Adaptive delay: back off on rate limits, recover when clear
+					if (matchResult.wasRateLimited) {
+						currentDelay = Math.min(currentDelay * 2, MAX_DELAY_MS);
+					} else {
+						currentDelay = Math.max(currentDelay * 0.9, BASE_DELAY_MS);
+					}
+
 					if (i < matchIdsNeedingDetails.length - 1) {
-						await new Promise(resolve => setTimeout(resolve, 100));
+						await sleep(currentDelay);
 					}
 				}
 
-				// Send final progress update
 				sendEvent("progress", {
 					totalIds: allMatchIds.length,
-					detailsFetched: detailsFetched,
+					detailsFetched,
 					pending: 0,
+					etaMs: 0,
 				});
 
 				sendEvent("complete", {});

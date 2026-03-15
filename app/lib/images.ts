@@ -46,7 +46,7 @@ export async function getImageTiles(): Promise<ImageTile[]> {
 		.map((champ) => ({
 			name: champ.id,
 			displayName: champ.name,
-			src: `https://ddragon.leagueoflegends.com/cdn/img/champion/tiles/${champ.id}_0.jpg`,
+			src: `https://ddragon.leagueoflegends.com/cdn/img/champion/tiles/${champ.id === "Fiddlesticks" ? "FiddleSticks" : champ.id}_0.jpg`,
 		}))
 		.sort((a, b) => a.displayName.localeCompare(b.displayName));
 

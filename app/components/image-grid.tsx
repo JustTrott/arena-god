@@ -22,6 +22,7 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 	});
 	const [sortMode, setSortMode] = useState<SortMode>("completion");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+	const [showClearConfirm, setShowClearConfirm] = useState(false);
 
 	useEffect(() => {
 		setMounted(true);
@@ -74,12 +75,52 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 
 	return (
 		<div className="space-y-6">
+			{showClearConfirm && (
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowClearConfirm(false)}>
+					<div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+						<h2 className="text-lg font-semibold mb-2">Clear Progress</h2>
+						<p className="text-gray-600 dark:text-gray-400 mb-4">
+							Are you sure you want to clear all {completedCount} champion wins? You can re-sync wins from Match History afterwards.
+						</p>
+						<div className="flex gap-2">
+							<button
+								onClick={() => setShowClearConfirm(false)}
+								className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={() => {
+									const newProgress = { firstPlaceChampions: [] as string[] };
+									setProgress(newProgress);
+									setArenaProgress(newProgress);
+									setShowClearConfirm(false);
+								}}
+								className="flex-1 px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600"
+							>
+								Clear All
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			<div className="space-y-2">
 				<div className="flex items-center justify-between">
 					<h3 className="text-lg font-medium">Progress</h3>
-					<span className="text-sm text-gray-500 dark:text-gray-400">
-						{completedCount} / {totalCount} champions
-					</span>
+					<div className="flex items-center gap-3">
+						{completedCount > 0 && (
+							<button
+								onClick={() => setShowClearConfirm(true)}
+								className="text-xs text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
+							>
+								Clear
+							</button>
+						)}
+						<span className="text-sm text-gray-500 dark:text-gray-400">
+							{completedCount} / {totalCount} champions
+						</span>
+					</div>
 				</div>
 				<div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
 					<div
@@ -140,7 +181,7 @@ export function ImageGrid({ images, displayImages = images }: ImageGridProps) {
 									alt={image.displayName}
 									fill
 									priority
-									className={`object-cover rounded-lg ${
+									className={`object-cover rounded-lg transition-opacity duration-300 ${
 										isCompleted
 											? "opacity-100"
 											: "opacity-50"

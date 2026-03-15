@@ -58,11 +58,12 @@ export function Tabs({ images }: TabsProps) {
 			</div>
 
 			<div className="mt-6">
-				{activeTab === "tracker" ? (
+				<div className={activeTab === "tracker" ? "" : "hidden"}>
 					<ImageGrid images={images} displayImages={filteredImages} />
-				) : (
+				</div>
+				<div className={activeTab === "history" ? "" : "hidden"}>
 					<MatchHistory images={images} />
-				)}
+				</div>
 			</div>
 		</div>
 	);

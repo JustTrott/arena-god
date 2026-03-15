@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
 	MATCH_HISTORY: "arena-god-match-history",
 	ARENA_PROGRESS: "arena-god-progress",
 	MATCH_CACHE: "arena-god-match-cache",
+	USER_PUUID: "arena-god-user-puuid",
 } as const;
 
 export function getRiotId(): RiotId | null {
@@ -16,6 +17,16 @@ export function getRiotId(): RiotId | null {
 export function setRiotId(riotId: RiotId) {
 	if (typeof window === "undefined") return;
 	localStorage.setItem(STORAGE_KEYS.RIOT_ID, JSON.stringify(riotId));
+}
+
+export function getUserPuuid(): string | null {
+	if (typeof window === "undefined") return null;
+	return localStorage.getItem(STORAGE_KEYS.USER_PUUID);
+}
+
+export function setUserPuuid(puuid: string) {
+	if (typeof window === "undefined") return;
+	localStorage.setItem(STORAGE_KEYS.USER_PUUID, puuid);
 }
 
 export function getMatchHistory(): MatchResult[] {
@@ -56,8 +67,36 @@ export function getCachedMatch(matchId: string): MatchInfo | null {
 	return cache[matchId] || null;
 }
 
-export function cacheMatch(matchId: string, matchInfo: MatchInfo) {
+export function cacheMatch(matchId: string, fullMatchData: any) {
+	// Extract only the fields we need for display
+	const minimalMatchInfo: MatchInfo = {
+		info: {
+			gameStartTimestamp: fullMatchData?.info?.gameStartTimestamp,
+			participants: (fullMatchData?.info?.participants || []).map((p: any) => ({
+				puuid: p.puuid,
+				championName: p.championName,
+				placement: p.placement,
+				riotIdGameName: p.riotIdGameName,
+				riotIdTagline: p.riotIdTagline,
+			})),
+		},
+	};
 	const cache = getMatchCache();
-	cache[matchId] = matchInfo;
+	cache[matchId] = minimalMatchInfo;
 	setMatchCache(cache);
+}
+
+// Get list of match IDs that need details fetched
+export function getUnfetchedMatchIds(): string[] {
+	const history = getMatchHistory();
+	const cache = getMatchCache();
+	return history
+		.map(m => m.matchId)
+		.filter(id => !cache[id]);
+}
+
+// Get all known match IDs
+export function getAllMatchIds(): string[] {
+	const history = getMatchHistory();
+	return history.map(m => m.matchId);
 }

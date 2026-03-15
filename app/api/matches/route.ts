@@ -202,7 +202,7 @@ export async function GET(request: NextRequest) {
 				// Step 2: Fetch ALL match IDs in batches of 100 until we hit known ones or reach the end
 				sendEvent("status", { message: "Fetching match IDs..." });
 				
-				let allMatchIds: string[] = [];
+				const allMatchIds: string[] = [];
 				let currentStart = start;
 				let hasMore = true;
 				let batchNumber = 0;
@@ -315,7 +315,7 @@ export async function GET(request: NextRequest) {
 							const minimalMatchInfo: MatchData = {
 								info: {
 									gameStartTimestamp: matchResult.data.info.gameStartTimestamp,
-									participants: matchResult.data.info.participants.map((p: any) => ({
+									participants: matchResult.data.info.participants.map((p: { puuid: string; championName: string; placement: number; riotIdGameName?: string; riotIdTagline?: string }) => ({
 										puuid: p.puuid,
 										championName: p.championName,
 										placement: p.placement,

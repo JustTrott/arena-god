@@ -519,7 +519,6 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 			{/* Match Details Modal */}
 			{selectedMatch && (
 				<MatchDetailsModal
-					matchId={selectedMatch.matchId}
 					matchInfo={selectedMatch.matchInfo}
 					images={images}
 					onClose={() => setSelectedMatch(null)}
@@ -531,7 +530,6 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 }
 
 interface MatchDetailsModalProps {
-	matchId: string;
 	matchInfo: MatchInfo | null;
 	images: ImageTile[];
 	onClose: () => void;
@@ -539,7 +537,6 @@ interface MatchDetailsModalProps {
 }
 
 function MatchDetailsModal({
-	matchId,
 	matchInfo,
 	images,
 	onClose,

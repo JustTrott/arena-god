@@ -62,10 +62,9 @@ async function getMatchInfo(matchId: string, region?: string) {
 
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: Promise<{ matchId: string }> | { matchId: string } }
+	{ params }: { params: Promise<{ matchId: string }> }
 ) {
-	const resolvedParams = await Promise.resolve(params);
-	const matchId = resolvedParams.matchId;
+	const { matchId } = await params;
 
 	if (!matchId) {
 		return new Response(
@@ -94,7 +93,7 @@ export async function GET(
 		const minimalMatchInfo = {
 			info: {
 				gameStartTimestamp: matchResult.data.info.gameStartTimestamp,
-				participants: matchResult.data.info.participants.map((p: any) => ({
+				participants: matchResult.data.info.participants.map((p: { puuid: string; championName: string; placement: number; riotIdGameName?: string; riotIdTagline?: string }) => ({
 					puuid: p.puuid,
 					championName: p.championName,
 					placement: p.placement,

@@ -67,12 +67,12 @@ export function getCachedMatch(matchId: string): MatchInfo | null {
 	return cache[matchId] || null;
 }
 
-export function cacheMatch(matchId: string, fullMatchData: any) {
+export function cacheMatch(matchId: string, fullMatchData: MatchInfo) {
 	// Extract only the fields we need for display
 	const minimalMatchInfo: MatchInfo = {
 		info: {
 			gameStartTimestamp: fullMatchData?.info?.gameStartTimestamp,
-			participants: (fullMatchData?.info?.participants || []).map((p: any) => ({
+			participants: (fullMatchData?.info?.participants || []).map((p: { puuid: string; championName: string; placement: number; riotIdGameName?: string; riotIdTagline?: string }) => ({
 				puuid: p.puuid,
 				championName: p.championName,
 				placement: p.placement,

@@ -1,12 +1,45 @@
 import { RiotId, MatchResult, ArenaProgress, MatchInfo } from "../types";
 
+const STORAGE_VERSION = 3;
+
 const STORAGE_KEYS = {
+	VERSION: "arena-god-version",
 	RIOT_ID: "arena-god-riot-id",
-	MATCH_HISTORY: "arena-god-match-history",
 	ARENA_PROGRESS: "arena-god-progress",
-	MATCH_CACHE: "arena-god-match-cache",
 	USER_PUUID: "arena-god-user-puuid",
 } as const;
+
+// PUUID-scoped keys
+function matchHistoryKey(puuid: string) { return `arena-god-match-history-${puuid}`; }
+function matchCacheKey(puuid: string) { return `arena-god-match-cache-${puuid}`; }
+
+/** Returns true if storage was cleared due to version mismatch. */
+export function checkStorageVersion(): boolean {
+	if (typeof window === "undefined") return false;
+	const stored = localStorage.getItem(STORAGE_KEYS.VERSION);
+	const currentVersion = stored ? parseInt(stored, 10) : 0;
+	if (currentVersion < STORAGE_VERSION) {
+		// Migrate: move global match data to PUUID-scoped keys, then remove globals
+		const puuid = localStorage.getItem(STORAGE_KEYS.USER_PUUID);
+		const oldHistory = localStorage.getItem("arena-god-match-history");
+		const oldCache = localStorage.getItem("arena-god-match-cache");
+		if (puuid) {
+			if (oldHistory && !localStorage.getItem(matchHistoryKey(puuid))) {
+				localStorage.setItem(matchHistoryKey(puuid), oldHistory);
+			}
+			if (oldCache && !localStorage.getItem(matchCacheKey(puuid))) {
+				localStorage.setItem(matchCacheKey(puuid), oldCache);
+			}
+		}
+		localStorage.removeItem("arena-god-match-history");
+		localStorage.removeItem("arena-god-match-cache");
+		localStorage.setItem(STORAGE_KEYS.VERSION, String(STORAGE_VERSION));
+		return currentVersion > 0;
+	}
+	return false;
+}
+
+// --- Global storage (not PUUID-scoped) ---
 
 export function getRiotId(): RiotId | null {
 	if (typeof window === "undefined") return null;
@@ -29,17 +62,6 @@ export function setUserPuuid(puuid: string) {
 	localStorage.setItem(STORAGE_KEYS.USER_PUUID, puuid);
 }
 
-export function getMatchHistory(): MatchResult[] {
-	if (typeof window === "undefined") return [];
-	const stored = localStorage.getItem(STORAGE_KEYS.MATCH_HISTORY);
-	return stored ? JSON.parse(stored) : [];
-}
-
-export function setMatchHistory(history: MatchResult[]) {
-	if (typeof window === "undefined") return;
-	localStorage.setItem(STORAGE_KEYS.MATCH_HISTORY, JSON.stringify(history));
-}
-
 export function getArenaProgress(): ArenaProgress {
 	if (typeof window === "undefined") return { firstPlaceChampions: [] };
 	const stored = localStorage.getItem(STORAGE_KEYS.ARENA_PROGRESS);
@@ -51,24 +73,44 @@ export function setArenaProgress(progress: ArenaProgress) {
 	localStorage.setItem(STORAGE_KEYS.ARENA_PROGRESS, JSON.stringify(progress));
 }
 
-export function getMatchCache(): Record<string, MatchInfo> {
+// --- PUUID-scoped storage ---
+
+export function getMatchHistory(puuid?: string | null): MatchResult[] {
+	if (typeof window === "undefined") return [];
+	const id = puuid || localStorage.getItem(STORAGE_KEYS.USER_PUUID);
+	if (!id) return [];
+	const stored = localStorage.getItem(matchHistoryKey(id));
+	return stored ? JSON.parse(stored) : [];
+}
+
+export function setMatchHistory(history: MatchResult[], puuid?: string | null) {
+	if (typeof window === "undefined") return;
+	const id = puuid || localStorage.getItem(STORAGE_KEYS.USER_PUUID);
+	if (!id) return;
+	localStorage.setItem(matchHistoryKey(id), JSON.stringify(history));
+}
+
+export function getMatchCache(puuid?: string | null): Record<string, MatchInfo> {
 	if (typeof window === "undefined") return {};
-	const stored = localStorage.getItem(STORAGE_KEYS.MATCH_CACHE);
+	const id = puuid || localStorage.getItem(STORAGE_KEYS.USER_PUUID);
+	if (!id) return {};
+	const stored = localStorage.getItem(matchCacheKey(id));
 	return stored ? JSON.parse(stored) : {};
 }
 
-export function setMatchCache(cache: Record<string, MatchInfo>) {
+export function setMatchCache(cache: Record<string, MatchInfo>, puuid?: string | null) {
 	if (typeof window === "undefined") return;
-	localStorage.setItem(STORAGE_KEYS.MATCH_CACHE, JSON.stringify(cache));
+	const id = puuid || localStorage.getItem(STORAGE_KEYS.USER_PUUID);
+	if (!id) return;
+	localStorage.setItem(matchCacheKey(id), JSON.stringify(cache));
 }
 
-export function getCachedMatch(matchId: string): MatchInfo | null {
-	const cache = getMatchCache();
+export function getCachedMatch(matchId: string, puuid?: string | null): MatchInfo | null {
+	const cache = getMatchCache(puuid);
 	return cache[matchId] || null;
 }
 
-export function cacheMatch(matchId: string, fullMatchData: MatchInfo) {
-	// Extract only the fields we need for display
+export function cacheMatch(matchId: string, fullMatchData: MatchInfo, puuid?: string | null) {
 	const minimalMatchInfo: MatchInfo = {
 		info: {
 			gameStartTimestamp: fullMatchData?.info?.gameStartTimestamp,
@@ -81,22 +123,7 @@ export function cacheMatch(matchId: string, fullMatchData: MatchInfo) {
 			})),
 		},
 	};
-	const cache = getMatchCache();
+	const cache = getMatchCache(puuid);
 	cache[matchId] = minimalMatchInfo;
-	setMatchCache(cache);
-}
-
-// Get list of match IDs that need details fetched
-export function getUnfetchedMatchIds(): string[] {
-	const history = getMatchHistory();
-	const cache = getMatchCache();
-	return history
-		.map(m => m.matchId)
-		.filter(id => !cache[id]);
-}
-
-// Get all known match IDs
-export function getAllMatchIds(): string[] {
-	const history = getMatchHistory();
-	return history.map(m => m.matchId);
+	setMatchCache(cache, puuid);
 }

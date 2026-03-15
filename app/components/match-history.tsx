@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { MatchResult, MatchInfo } from "../types";
 import {
@@ -14,7 +14,6 @@ import {
 	getCachedMatch,
 	getUserPuuid,
 	setUserPuuid,
-	getAllMatchIds,
 	getMatchCache,
 } from "../lib/storage";
 import { ImageTile } from "../lib/images";
@@ -30,6 +29,15 @@ const PLACEMENT_COLORS = {
 	8: "bg-gray-400 dark:bg-gray-700",
 } as const;
 
+function formatEta(ms: number): string {
+	if (ms <= 0) return "";
+	const seconds = Math.ceil(ms / 1000);
+	if (seconds < 60) return `~${seconds}s remaining`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	return `~${minutes}m ${remainingSeconds}s remaining`;
+}
+
 interface MatchHistoryProps {
 	images: ImageTile[];
 }
@@ -42,18 +50,26 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [statusMessage, setStatusMessage] = useState<string | null>(null);
-	const [hasMore, setHasMore] = useState(false);
-	const [currentStart, setCurrentStart] = useState(0);
 	const [selectedMatch, setSelectedMatch] = useState<{
 		matchId: string;
 		matchInfo: MatchInfo | null;
 	} | null>(null);
 	const [isLoadingMatch, setIsLoadingMatch] = useState(false);
+	const [firstPlaceOnly, setFirstPlaceOnly] = useState(false);
 	const [fetchProgress, setFetchProgress] = useState({
 		totalIds: 0,
 		detailsFetched: 0,
 		pending: 0,
+		etaMs: 0,
 	});
+	const [activePuuid, setActivePuuidState] = useState<string | null>(null);
+	const activePuuidRef = useRef<string | null>(null);
+	const setActivePuuid = (puuid: string | null) => {
+		setActivePuuidState(puuid);
+		activePuuidRef.current = puuid;
+	};
+	const abortControllerRef = useRef<AbortController | null>(null);
+	const tagLineInputRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
 		const storedRiotId = getRiotId();
@@ -62,46 +78,39 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 			setTagLine(storedRiotId.tagLine);
 			setTagLinePrefixActive(Boolean(storedRiotId.tagLine));
 		}
-		// Load matches from localStorage and restore state
-		const storedMatches = getMatchHistory();
+		const puuid = getUserPuuid();
+		setActivePuuid(puuid);
+		const storedMatches = getMatchHistory(puuid);
 		if (storedMatches.length > 0) {
 			setMatchHistoryState(storedMatches);
-			setCurrentStart(storedMatches.length);
 		}
 	}, []);
 
-	const handleStreamMatches = async (start: number = 0, append: boolean = false) => {
+	const handleStreamMatches = async () => {
 		if (!gameName || !tagLine) {
 			setError("Please enter both game name and tag line");
 			return;
 		}
 
+		// Abort any in-flight fetch
+		if (abortControllerRef.current) {
+			abortControllerRef.current.abort();
+		}
+		const abortController = new AbortController();
+		abortControllerRef.current = abortController;
+
 		setIsLoading(true);
 		setError(null);
 		setStatusMessage("Connecting...");
-		setFetchProgress({ totalIds: 0, detailsFetched: 0, pending: 0 });
+		setFetchProgress({ totalIds: 0, detailsFetched: 0, pending: 0, etaMs: 0 });
 
-		// Get known and cached match IDs
-		const knownMatchIds = getAllMatchIds();
-		const cachedMatchIds = Object.keys(getMatchCache());
-
-		if (!append) {
-			setMatchHistoryState([]);
-			setCurrentStart(0);
-			setHasMore(false);
-		}
-
-		const newMatches: MatchResult[] = [];
-		const allNewMatchIds: string[] = []; // Track all match IDs received (even without details)
-		let accountData: { gameName: string; tagLine: string; puuid: string } | null = null;
-		let appendedCount = 0; // Track how many matches were appended in this batch
+		const cachedMatchIds = Object.keys(getMatchCache(activePuuid));
 
 		try {
-			const url = `/api/matches?gameName=${encodeURIComponent(gameName)}&tagLine=${encodeURIComponent(tagLine)}&start=${start}&count=100` +
-				(knownMatchIds.length > 0 ? `&knownMatchIds=${knownMatchIds.join(",")}` : "") +
+			const url = `/api/matches?gameName=${encodeURIComponent(gameName)}&tagLine=${encodeURIComponent(tagLine)}&start=0&count=100` +
 				(cachedMatchIds.length > 0 ? `&cachedMatchIds=${cachedMatchIds.join(",")}` : "");
-			const response = await fetch(url);
-			
+			const response = await fetch(url, { signal: abortController.signal });
+
 			if (!response.ok) {
 				const errorData = await response.json();
 				setError(errorData.error || "Failed to fetch matches");
@@ -121,41 +130,28 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 				return;
 			}
 
+			// We'll track all match IDs from the server to build the correct order
+			const allMatchIdsFromServer: string[] = [];
+
 			const processBuffer = (): boolean => {
 				const lines = buffer.split("\n\n");
 				buffer = lines.pop() || "";
 
-				console.log(`[Frontend] Processing buffer, ${lines.length} complete events found`);
-
 				for (const line of lines) {
-					if (!line.trim()) {
-						console.log("[Frontend] Skipping empty line");
-						continue;
-					}
-
-					console.log("[Frontend] Raw line:", line.substring(0, 200));
+					if (!line.trim()) continue;
 
 					const [eventLine, dataLine] = line.split("\ndata: ");
-					if (!eventLine || !dataLine) {
-						console.log("[Frontend] Skipping malformed line:", line.substring(0, 100));
-						continue;
-					}
+					if (!eventLine || !dataLine) continue;
 
 					const eventMatch = eventLine.match(/event: (\w+)/);
-					if (!eventMatch) {
-						console.log("[Frontend] No event match in line:", eventLine);
-						continue;
-					}
+					if (!eventMatch) continue;
 
 					const eventType = eventMatch[1];
-					console.log(`[Frontend] Parsed event type: ${eventType}`);
-					
+
 					let data;
 					try {
 						data = JSON.parse(dataLine);
-						console.log(`[Frontend] Parsed event data:`, data);
-					} catch (e) {
-						console.error("[Frontend] Failed to parse JSON:", dataLine, e);
+					} catch {
 						continue;
 					}
 
@@ -163,28 +159,33 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 						case "status":
 							setStatusMessage(data.message);
 							break;
-						case "account":
-							accountData = data.data;
+						case "account": {
+							const newPuuid = data.data.puuid;
 							setRiotId({
 								gameName: data.data.gameName,
 								tagLine: data.data.tagLine,
 							});
-							setUserPuuid(data.data.puuid);
+							setUserPuuid(newPuuid);
+							setActivePuuid(newPuuid);
+							// Load this user's existing history
+							const existingHistory = getMatchHistory(newPuuid);
+							if (existingHistory.length > 0) {
+								setMatchHistoryState(existingHistory);
+							}
 							break;
+						}
 						case "matchIdBatch":
-							// Track all match IDs received in this batch
 							if (data.matchIds && Array.isArray(data.matchIds)) {
-								allNewMatchIds.push(...data.matchIds);
+								allMatchIdsFromServer.push(...data.matchIds);
 								setFetchProgress(prev => ({
 									...prev,
-									totalIds: allNewMatchIds.length,
+									totalIds: allMatchIdsFromServer.length,
 								}));
 							}
 							break;
 						case "matchIds":
-							setHasMore(false); // We're fetching all matches, so no more after this
 							if (data.count > 0) {
-								setStatusMessage(`Found ${data.count} match IDs. Fetching details...`);
+								setStatusMessage(`Found ${data.count} matches. Fetching details...`);
 							}
 							break;
 						case "progress":
@@ -193,127 +194,98 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 									totalIds: data.totalIds || 0,
 									detailsFetched: data.detailsFetched || 0,
 									pending: data.pending || 0,
+									etaMs: data.etaMs || 0,
 								});
 								if (data.pending > 0) {
-									setStatusMessage(`Fetched ${data.totalIds} match IDs, ${data.detailsFetched} with details, ${data.pending} pending...`);
+									const done = (data.totalIds || 0) - (data.pending || 0);
+									const eta = formatEta(data.etaMs || 0);
+									setStatusMessage(`Fetching match details... ${done} of ${data.totalIds}${eta ? ` (${eta})` : ""}`);
 								}
 							}
 							break;
-						case "match":
-							console.log("[Frontend] Received match event:", data);
+						case "match": {
 							if (data.matchInfo) {
-								cacheMatch(data.matchId, data.matchInfo);
+								cacheMatch(data.matchId, data.matchInfo, activePuuidRef.current);
 							}
 							const matchResult: MatchResult = {
 								matchId: data.matchId,
 								champion: data.champion,
 								placement: data.placement,
 							};
-							console.log("[Frontend] Created match result:", matchResult);
-							
-							if (append) {
-								appendedCount++;
-								setMatchHistoryState((prev) => {
-									const updated = [...prev, matchResult];
-									console.log("[Frontend] Appended match, new count:", updated.length);
-									// Save to localStorage immediately when appending
-									setMatchHistory(updated);
-									return updated;
-								});
-							} else {
-								newMatches.push(matchResult);
-								const updated = [...newMatches];
-								console.log("[Frontend] Added match to newMatches, count:", updated.length, "matchId:", matchResult.matchId);
-								setMatchHistoryState(updated);
+							// Sync win to tracker immediately
+							if (matchResult.placement === 1) {
+								const progress = getArenaProgress();
+								if (!progress.firstPlaceChampions.includes(matchResult.champion)) {
+									setArenaProgress({
+										firstPlaceChampions: [...progress.firstPlaceChampions, matchResult.champion],
+									});
+								}
 							}
+							// Incrementally add to state, maintaining order from server
+							setMatchHistoryState(prev => {
+								const existingIds = new Set(prev.map(m => m.matchId));
+								if (existingIds.has(matchResult.matchId)) {
+									// Update existing match in place
+									return prev.map(m => m.matchId === matchResult.matchId ? matchResult : m);
+								}
+								// Insert in correct position based on server order
+								const serverIndex = allMatchIdsFromServer.indexOf(matchResult.matchId);
+								// Find the right insertion point
+								let insertAt = 0;
+								for (let i = 0; i < prev.length; i++) {
+									const prevServerIndex = allMatchIdsFromServer.indexOf(prev[i].matchId);
+									if (prevServerIndex === -1 || serverIndex < prevServerIndex) {
+										break;
+									}
+									insertAt = i + 1;
+								}
+								const updated = [...prev];
+								updated.splice(insertAt, 0, matchResult);
+								setMatchHistory(updated, activePuuidRef.current);
+								return updated;
+							});
 							break;
+						}
 						case "complete":
-							console.log("[Frontend] Complete event received, newMatches count:", newMatches.length);
 							setIsLoading(false);
-							
-							// Show completion message based on progress
+
 							setFetchProgress(prev => {
 								if (prev.totalIds > 0) {
-									const finalMessage = prev.detailsFetched > 0
-										? `Complete! Fetched ${prev.totalIds} match IDs, ${prev.detailsFetched} with details.`
-										: `Complete! Found ${prev.totalIds} match IDs.`;
-									setStatusMessage(finalMessage);
-									// Clear status message after a delay
+									setStatusMessage(`Complete! ${prev.detailsFetched} new matches fetched.`);
 									setTimeout(() => setStatusMessage(null), 3000);
 								} else {
 									setStatusMessage(null);
 								}
-								return prev;
+								return { ...prev, etaMs: 0 };
 							});
-							
-							if (!append) {
-								setMatchHistoryState([...newMatches]);
-								setMatchHistory(newMatches);
-								setCurrentStart(newMatches.length);
-								console.log("[Frontend] Final state set with", newMatches.length, "matches");
-								const newFirstPlaceChampions = newMatches
-									.filter((result) => result.placement === 1)
-									.map((result) => result.champion);
-								if (newFirstPlaceChampions.length > 0 && accountData) {
-									const currentProgress = getArenaProgress();
-									const newProgress = {
-										firstPlaceChampions: [
-											...new Set([
-												...currentProgress.firstPlaceChampions,
-												...newFirstPlaceChampions,
-											]),
-										],
-									};
-									setArenaProgress(newProgress);
-								}
-							} else {
-								// When appending, update currentStart based on how many matches were added
-								setCurrentStart((prev) => prev + appendedCount);
-								console.log("[Frontend] Appended", appendedCount, "matches, currentStart updated");
-							}
-							return true; // Signal to stop processing
+
+							return true;
 						case "error":
 							setError(data.error || "An error occurred");
 							setIsLoading(false);
 							setStatusMessage(null);
-							return true; // Signal to stop processing
+							return true;
 					}
 				}
-				return false; // Continue processing
-			}
+				return false;
+			};
 
-			// Read and process the stream
-			let chunkCount = 0;
 			while (true) {
 				const { done, value } = await reader.read();
-				chunkCount++;
-				
-				console.log(`[Frontend] Stream chunk ${chunkCount}, done: ${done}, value length: ${value?.length || 0}`);
-				
+
 				if (done) {
-					console.log("[Frontend] Stream ended, processing remaining buffer");
-					// Process any remaining buffer data
-					if (buffer.trim()) {
-						console.log("[Frontend] Remaining buffer:", buffer.substring(0, 500));
-						processBuffer();
-					}
+					if (buffer.trim()) processBuffer();
 					break;
 				}
 
-				const decoded = decoder.decode(value, { stream: true });
-				console.log(`[Frontend] Decoded chunk (${decoded.length} chars):`, decoded.substring(0, 200));
-				buffer += decoded;
-				
-				const shouldStop = processBuffer();
-				if (shouldStop) {
-					console.log("[Frontend] Early exit requested by processBuffer");
-					// Early exit if complete or error event
-					break;
-				}
+				buffer += decoder.decode(value, { stream: true });
+
+				if (processBuffer()) break;
 			}
-			
-			console.log(`[Frontend] Stream processing complete. Total chunks: ${chunkCount}, Final buffer length: ${buffer.length}`);
 		} catch (error) {
+			if (error instanceof DOMException && error.name === "AbortError") {
+				return;
+			}
 			console.error("Failed to stream matches:", error);
 			setError("Failed to stream matches");
 			setIsLoading(false);
@@ -321,25 +293,13 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 		}
 	};
 
-	const handleUpdate = () => {
-		// Always start from 0, but pass known/cached IDs to skip refetching
-		handleStreamMatches(0, false);
-	};
-
-	const handleLoadMore = () => {
-		// This is now deprecated since we fetch all matches, but keeping for compatibility
-		handleStreamMatches(currentStart, true);
-	};
-
 	const handleMatchClick = async (matchId: string) => {
-		// Try to get from cache first
-		const cachedMatch = getCachedMatch(matchId);
+		const cachedMatch = getCachedMatch(matchId, activePuuid);
 		if (cachedMatch) {
 			setSelectedMatch({ matchId, matchInfo: cachedMatch });
 			return;
 		}
 
-		// If not cached, fetch from API
 		setIsLoadingMatch(true);
 		try {
 			const response = await fetch(`/api/match/${matchId}`);
@@ -352,7 +312,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 
 			const data = await response.json();
 			if (data.matchInfo) {
-				cacheMatch(matchId, data.matchInfo);
+				cacheMatch(matchId, data.matchInfo, activePuuid);
 				setSelectedMatch({ matchId, matchInfo: data.matchInfo });
 			} else {
 				setError("Match details not found");
@@ -364,6 +324,10 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 			setIsLoadingMatch(false);
 		}
 	};
+
+	const progressPercent = fetchProgress.totalIds > 0
+		? Math.round(((fetchProgress.totalIds - fetchProgress.pending) / fetchProgress.totalIds) * 100)
+		: 0;
 
 	return (
 		<div className="space-y-6">
@@ -379,7 +343,15 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 						type="text"
 						id="gameName"
 						value={gameName}
-						onChange={(e) => setGameName(e.target.value)}
+						onChange={(e) => {
+							const val = e.target.value;
+							if (val.includes("#")) {
+								setGameName(val.replace("#", ""));
+								tagLineInputRef.current?.focus();
+							} else {
+								setGameName(val);
+							}
+						}}
 						className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
 						placeholder="Enter game name"
 					/>
@@ -403,6 +375,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 							#
 						</span>
 						<input
+							ref={tagLineInputRef}
 							type="text"
 							id="tagLine"
 							value={tagLine}
@@ -418,7 +391,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 					</div>
 				</div>
 				<button
-					onClick={handleUpdate}
+					onClick={handleStreamMatches}
 					disabled={isLoading}
 					className="h-[42px] px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
 				>
@@ -434,17 +407,18 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 
 			{statusMessage && (
 				<div className="p-4 bg-blue-100 text-blue-700 rounded-md dark:bg-blue-900 dark:text-blue-100">
-					{statusMessage}
-					{fetchProgress.totalIds > 0 && (
-						<div className="mt-2 text-sm">
-							<div className="flex items-center gap-4">
-								<span>Total IDs: {fetchProgress.totalIds}</span>
-								<span>Details: {fetchProgress.detailsFetched}</span>
-								{fetchProgress.pending > 0 && (
-									<span className="text-blue-600 dark:text-blue-400">
-										Pending: {fetchProgress.pending}
-									</span>
-								)}
+					<div>{statusMessage}</div>
+					{isLoading && fetchProgress.totalIds > 0 && fetchProgress.pending > 0 && (
+						<div className="mt-2">
+							<div className="h-2 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
+								<div
+									className="h-full bg-blue-500 transition-all duration-300"
+									style={{ width: `${progressPercent}%` }}
+								/>
+							</div>
+							<div className="mt-1 text-xs text-blue-600 dark:text-blue-400 flex justify-between">
+								<span>{fetchProgress.totalIds - fetchProgress.pending} of {fetchProgress.totalIds} matches</span>
+								<span>{formatEta(fetchProgress.etaMs)}</span>
 							</div>
 						</div>
 					)}
@@ -452,7 +426,41 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 			)}
 
 			<div className="space-y-4">
-				<h2 className="text-xl font-semibold">Recent Matches {matchHistory.length > 0 && `(${matchHistory.length})`}</h2>
+				<div className="flex items-center justify-between">
+					<h2 className="text-xl font-semibold">Recent Matches {matchHistory.length > 0 && `(${firstPlaceOnly ? matchHistory.filter(m => m.placement === 1).length + " wins / " : ""}${matchHistory.length})`}</h2>
+					{matchHistory.length > 0 && (
+						<div className="flex items-center gap-2">
+							<button
+								onClick={() => {
+									const wins = matchHistory
+										.filter(m => m.placement === 1)
+										.map(m => m.champion);
+									const progress = getArenaProgress();
+									setArenaProgress({
+										firstPlaceChampions: [
+											...new Set([...progress.firstPlaceChampions, ...wins]),
+										],
+									});
+									setStatusMessage("Synced wins to tracker!");
+									setTimeout(() => setStatusMessage(null), 2000);
+								}}
+								className="px-3 py-1.5 text-sm rounded-md bg-green-500 text-white hover:bg-green-600 transition-colors"
+							>
+								Sync to Tracker
+							</button>
+							<button
+								onClick={() => setFirstPlaceOnly(prev => !prev)}
+								className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+									firstPlaceOnly
+										? "bg-yellow-500 text-white"
+										: "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+								}`}
+							>
+								#1 Only
+							</button>
+						</div>
+					)}
+				</div>
 				{matchHistory.length === 0 && !isLoading && (
 					<div className="text-gray-500 dark:text-gray-400 text-center py-8">
 						No matches found
@@ -460,7 +468,7 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 				)}
 				{matchHistory.length > 0 && (
 					<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-						{matchHistory.map((match) => {
+						{matchHistory.filter(m => !firstPlaceOnly || m.placement === 1).map((match) => {
 							const isFirstPlace = match.placement === 1;
 							const championImage = images.find((image) => image.name.toLowerCase() === match.champion.toLowerCase())?.src;
 							return (
@@ -483,10 +491,8 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 												sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
 											/>
 										)}
-										{/* Dark overlay for better text readability */}
 										<div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 									</div>
-									{/* Placement badge */}
 									<div className="absolute bottom-0 left-0 right-0 p-2">
 										<div
 											className={`px-2 py-1 rounded-full text-white text-xs font-bold text-center ${
@@ -504,19 +510,8 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 						})}
 					</div>
 				)}
-				{hasMore && !isLoading && (
-					<div className="flex justify-center pt-6">
-						<button
-							onClick={handleLoadMore}
-							className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors font-medium"
-						>
-							Load More
-						</button>
-					</div>
-				)}
 			</div>
 
-			{/* Match Details Modal */}
 			{selectedMatch && (
 				<MatchDetailsModal
 					matchInfo={selectedMatch.matchInfo}
@@ -583,7 +578,6 @@ function MatchDetailsModal({
 	const participants = matchInfo.info?.participants || [];
 	const gameStartTimestamp = matchInfo.info?.gameStartTimestamp;
 
-	// Group participants by placement (each team has 2 people with the same placement)
 	const teams = new Map<number, typeof participants>();
 	const userParticipant = userPuuid
 		? participants.find((p) => p.puuid === userPuuid)
@@ -597,13 +591,10 @@ function MatchDetailsModal({
 		teams.get(placement)!.push(participant);
 	});
 
-	// Sort teams by placement (1st place first, etc.)
 	const sortedTeams = Array.from(teams.entries()).sort(([placementA], [placementB]) => {
-		// User's team first if found
 		const userPlacement = userParticipant?.placement;
 		if (placementA === userPlacement) return -1;
 		if (placementB === userPlacement) return 1;
-		// Otherwise sort by placement (1, 2, 3, etc.)
 		return placementA - placementB;
 	});
 

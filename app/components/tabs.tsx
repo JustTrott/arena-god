@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { ImageGrid } from "./image-grid";
 import { MatchHistory } from "./match-history";
 import { Stats } from "./stats";
+import { LiveGame } from "./live-game";
 import { ImageTile } from "../lib/images";
 import { checkStorageVersion } from "../lib/storage";
 
@@ -82,6 +83,16 @@ export function Tabs({ images }: TabsProps) {
 					>
 						Stats
 					</button>
+					<button
+						onClick={() => setActiveTab("live")}
+						className={`px-4 py-2 rounded-md transition-colors ${
+							activeTab === "live"
+								? "bg-blue-500 text-white"
+								: "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+						}`}
+					>
+						Live Game
+					</button>
 				</div>
 				{activeTab === "tracker" && (
 					<div className="w-full sm:w-64">
@@ -106,6 +117,8 @@ export function Tabs({ images }: TabsProps) {
 				<div className={activeTab === "stats" ? "" : "hidden"}>
 					<Stats images={images} />
 				</div>
+				{/* Mounted only when active so the 30s poll stops when you leave the tab. */}
+				{activeTab === "live" && <LiveGame images={images} />}
 			</div>
 		</div>
 	);

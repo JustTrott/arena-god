@@ -146,8 +146,13 @@ export function LiveGame({ images }: LiveGameProps) {
 	const [showAll, setShowAll] = useState(false);
 	const tagLineInputRef = useRef<HTMLInputElement>(null);
 	const enabledRef = useRef(false);
-	const finishedGameRef = useRef<{ matchId: string; puuid: string } | null>(null);
-	const inGame = Boolean(game?.inGame);
+	const [clientPhase, setClientPhase] = useState<string | null>(null);
+	const [pendingMatch, setPendingMatch] = useState<{ matchId: string; puuid: string } | null>(null);
+	const runningGameRef = useRef<{ matchId: string; puuid: string } | null>(null);
+
+	// Arena leaves a match "active" in spectator after you are knocked out — the other teams play
+	// on — so the local client is the authority whenever it is reachable.
+	const inGame = clientPhase ? clientPhase === "InProgress" : Boolean(game?.inGame);
 
 	useEffect(() => {
 		const storedRiotId = getRiotId();
@@ -209,22 +214,23 @@ export function LiveGame({ images }: LiveGameProps) {
 		return () => clearInterval(interval);
 	}, [check, gameName, tagLine, platform, isLoading, lastChecked]);
 
-	// Champ select only exists in the local League client, and polling localhost is free —
-	// no Riot ID needed, no rate limit. Once a game is running champ select is over, so it stops.
+	// Champ select only exists in the local League client, and polling localhost is free — no Riot
+	// ID, no rate limit. It runs unconditionally: you can be back in champ select while spectator
+	// still reports your old Arena match as running.
 	useEffect(() => {
-		if (inGame) {
-			setChampSelect(null);
-			return;
-		}
-
 		let cancelled = false;
 		const poll = async () => {
 			try {
 				const response = await fetch("/api/champ-select");
 				const data = await response.json();
-				if (!cancelled) setChampSelect(data.active ? data : null);
+				if (cancelled) return;
+				setChampSelect(data.active ? data : null);
+				setClientPhase(data.clientPhase ?? null);
 			} catch {
-				if (!cancelled) setChampSelect(null);
+				if (!cancelled) {
+					setChampSelect(null);
+					setClientPhase(null);
+				}
 			}
 		};
 		poll();
@@ -233,26 +239,33 @@ export function LiveGame({ images }: LiveGameProps) {
 			cancelled = true;
 			clearInterval(interval);
 		};
-	}, [inGame]);
+	}, []);
 
-	// Remember the running game so its result can be recorded once it disappears from spectator.
+	// Remember whichever game spectator reports, so its result can be recorded when we are out.
 	useEffect(() => {
-		if (inGame && game?.gameId) {
-			finishedGameRef.current = {
+		if (game?.inGame && game.gameId) {
+			runningGameRef.current = {
 				matchId: `${platform.toUpperCase()}_${game.gameId}`,
 				puuid: game.puuid,
 			};
 			setResult(null);
 		}
-	}, [inGame, game, platform]);
+	}, [game, platform]);
 
-	// Game over: pull the finished match and write the placement to local storage. Riot needs a
-	// moment to publish it, hence the retries.
+	// Out of the game — hand the match over to be recorded.
 	useEffect(() => {
-		if (inGame || !finishedGameRef.current) return;
+		if (inGame || !runningGameRef.current) return;
+		setPendingMatch(runningGameRef.current);
+		runningGameRef.current = null;
+	}, [inGame]);
 
-		const { matchId, puuid } = finishedGameRef.current;
-		finishedGameRef.current = null;
+	// Pull the finished match and write the placement to local storage. In Arena the match is only
+	// published once the last team is done, which can be minutes after you were knocked out, so
+	// this keeps trying — and is keyed on the match itself so starting a new game does not cancel it.
+	useEffect(() => {
+		if (!pendingMatch) return;
+
+		const { matchId, puuid } = pendingMatch;
 		let cancelled = false;
 		let attempts = 0;
 
@@ -290,16 +303,18 @@ export function LiveGame({ images }: LiveGameProps) {
 						} else {
 							setResult(`Finished #${me.placement} with ${me.championName}`);
 						}
+						setPendingMatch(null);
 						return;
 					}
 				}
 			} catch {
 				// fall through to the retry
 			}
-			if (!cancelled && attempts < 5) {
-				setTimeout(record, 15000);
+			if (!cancelled && attempts < 20) {
+				setTimeout(record, 30000);
 			} else if (!cancelled) {
-				setResult("Could not read the last match result yet — hit Update in Match History");
+				setResult("Could not read the last match result — hit Update in Match History");
+				setPendingMatch(null);
 			}
 		};
 
@@ -307,12 +322,13 @@ export function LiveGame({ images }: LiveGameProps) {
 		return () => {
 			cancelled = true;
 		};
-	}, [inGame]);
+	}, [pendingMatch]);
 
-	// Whatever we are on right now: hovered in champ select, or locked in and playing.
+	// Whatever we are on right now: hovered in champ select, or locked in and playing. The spectator
+	// side only counts while we are actually in that game.
 	const myChampionId =
 		champSelect?.myChampionId ||
-		game?.participants?.find((p) => p.puuid === game.puuid)?.championId ||
+		(inGame ? game?.participants?.find((p) => p.puuid === game.puuid)?.championId : 0) ||
 		0;
 
 	useEffect(() => {
@@ -346,8 +362,8 @@ export function LiveGame({ images }: LiveGameProps) {
 
 	// Champions still missing a #1, minus everything banned or already taken this game.
 	const takenIds = new Set([
-		...(game?.bannedChampionIds || []),
-		...(game?.participants || []).map((p) => p.championId),
+		...(inGame ? game?.bannedChampionIds || [] : []),
+		...(inGame ? (game?.participants || []).map((p) => p.championId) : []),
 		...(champSelect?.bannedChampionIds || []),
 		...(champSelect?.pickedChampionIds || []),
 	]);
@@ -478,10 +494,14 @@ export function LiveGame({ images }: LiveGameProps) {
 				</div>
 			)}
 
-			{game && !game.inGame && !champSelect && (
+			{game && !inGame && !champSelect && (
 				<div className="text-center py-12 text-gray-500 dark:text-gray-400">
 					<div className="text-lg">Not in a game right now</div>
-					<div className="text-sm mt-1">Auto-refreshing every 30s</div>
+					<div className="text-sm mt-1">
+						{clientPhase && clientPhase !== "None"
+							? `League client: ${clientPhase}`
+							: "Auto-refreshing every 30s"}
+					</div>
 				</div>
 			)}
 

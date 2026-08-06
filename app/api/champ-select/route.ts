@@ -67,11 +67,24 @@ export async function GET() {
 	}
 
 	try {
-		const { status, body } = await lcuGet(port, password, "/lol-champ-select/v1/session");
+		const [sessionResponse, phase] = await Promise.all([
+			lcuGet(port, password, "/lol-champ-select/v1/session"),
+			lcuGet(port, password, "/lol-gameflow/v1/gameflow-phase"),
+		]);
+
+		// None | Lobby | Matchmaking | ReadyCheck | ChampSelect | InProgress | WaitingForStats |
+		// PreEndOfGame | EndOfGame. This is the only honest answer to "is the player in a game",
+		// because Arena keeps a match alive in spectator long after you were knocked out of it.
+		const clientPhase: string | null =
+			phase.status === 200 ? JSON.parse(phase.body) : null;
+
+		const { status, body } = sessionResponse;
 
 		// 404 is the client's way of saying "not in champ select right now".
-		if (status === 404) return json({ active: false, reason: "Not in champ select" });
-		if (status !== 200) return json({ active: false, reason: `Client returned ${status}` });
+		if (status === 404) return json({ active: false, clientPhase, reason: "Not in champ select" });
+		if (status !== 200) {
+			return json({ active: false, clientPhase, reason: `Client returned ${status}` });
+		}
 
 		const session = JSON.parse(body);
 		const actions: ChampSelectAction[] = (session.actions || []).flat();
@@ -99,6 +112,7 @@ export async function GET() {
 
 		return json({
 			active: true,
+			clientPhase,
 			bannedChampionIds: [...new Set(bannedChampionIds)],
 			pickedChampionIds: [...new Set(pickedChampionIds)],
 			myChampionId: me?.championId || me?.championPickIntent || 0,

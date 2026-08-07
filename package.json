@@ -1,12 +1,13 @@
 {
-  "name": "arena-god",
-  "version": "0.1.0",
+  "name": "god-tracker",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node --import tsx --test app/lib/challenges.test.ts app/lib/i18n.test.ts app/lib/storage.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.2",
@@ -31,6 +32,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.2.2",
     "tailwindcss": "^4",
+    "tsx": "^4.23.11",
     "typescript": "^5"
   }
 }

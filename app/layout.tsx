@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { PostHogProvider } from "./providers";
+import { SITE_NAME, SITE_URL } from "./lib/site";
+import { DEFAULT_LOCALE, t } from "./lib/i18n";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,10 +15,22 @@ const geistMono = Geist_Mono({
 	subsets: ["latin"],
 });
 
+// Per-page metadata (title, description, canonical, hreflang) comes from lib/metadata.ts. Only the
+// values that are identical on every page live here.
 export const metadata: Metadata = {
-	title: "Arena God Tracker",
-	description:
-		"Allows you to track your progress in achieving the Arena God title. Automatically tracks your wins in arena too.",
+	metadataBase: new URL(SITE_URL),
+	title: {
+		default: `${SITE_NAME} — ${t(DEFAULT_LOCALE).tagline}`,
+		template: `%s — ${SITE_NAME}`,
+	},
+	description: t(DEFAULT_LOCALE).metaDescription,
+	applicationName: SITE_NAME,
+	robots: {
+		index: true,
+		follow: true,
+		googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 },
+	},
+	category: "games",
 };
 
 export default function RootLayout({

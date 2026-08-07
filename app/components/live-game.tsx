@@ -5,34 +5,15 @@ import Image from "next/image";
 import { ImageTile } from "../lib/images";
 import {
 	getRiotId,
-	setRiotId,
 	getUserPuuid,
 	getArenaProgress,
 	setArenaProgress,
-	getPlatform,
-	setPlatform,
 	getMatchHistory,
 	setMatchHistory,
 	cacheMatch,
 } from "../lib/storage";
-
-const PLATFORMS = [
-	{ value: "euw1", label: "EUW" },
-	{ value: "eun1", label: "EUNE" },
-	{ value: "na1", label: "NA" },
-	{ value: "kr", label: "KR" },
-	{ value: "br1", label: "BR" },
-	{ value: "jp1", label: "JP" },
-	{ value: "la1", label: "LAN" },
-	{ value: "la2", label: "LAS" },
-	{ value: "me1", label: "ME" },
-	{ value: "oc1", label: "OCE" },
-	{ value: "ru", label: "RU" },
-	{ value: "sg2", label: "SEA" },
-	{ value: "tr1", label: "TR" },
-	{ value: "tw2", label: "TW" },
-	{ value: "vn2", label: "VN" },
-];
+import { Locale, t } from "../lib/i18n";
+import { useAccount } from "./account";
 
 const QUEUE_NAMES: Record<number, string> = {
 	1700: "Arena 2v2",
@@ -67,6 +48,9 @@ const TIER_COLORS: Record<string, string> = {
 };
 
 const POLL_MS = 30000;
+// The local client costs nothing to ask, but bans do not change often enough to warrant a
+// tighter loop — this is the whole ban phase covered in a handful of requests.
+const CHAMP_SELECT_POLL_MS = 5000;
 
 interface LiveParticipant {
 	puuid: string;
@@ -128,12 +112,12 @@ function formatDuration(seconds: number): string {
 
 interface LiveGameProps {
 	images: ImageTile[];
+	locale: Locale;
 }
 
-export function LiveGame({ images }: LiveGameProps) {
-	const [gameName, setGameName] = useState("");
-	const [tagLine, setTagLine] = useState("");
-	const [platform, setPlatformState] = useState("euw1");
+export function LiveGame({ images, locale }: LiveGameProps) {
+	const { account, isSet } = useAccount();
+	const { gameName, tagLine, platform } = account;
 	const [game, setGame] = useState<LiveGame | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -144,7 +128,6 @@ export function LiveGame({ images }: LiveGameProps) {
 	const [build, setBuild] = useState<Build | null>(null);
 	const [result, setResult] = useState<string | null>(null);
 	const [showAll, setShowAll] = useState(false);
-	const tagLineInputRef = useRef<HTMLInputElement>(null);
 	const enabledRef = useRef(false);
 	const [clientPhase, setClientPhase] = useState<string | null>(null);
 	const [pendingMatch, setPendingMatch] = useState<{ matchId: string; puuid: string } | null>(null);
@@ -154,18 +137,9 @@ export function LiveGame({ images }: LiveGameProps) {
 	// on — so the local client is the authority whenever it is reachable.
 	const inGame = clientPhase ? clientPhase === "InProgress" : Boolean(game?.inGame);
 
-	useEffect(() => {
-		const storedRiotId = getRiotId();
-		if (storedRiotId) {
-			setGameName(storedRiotId.gameName);
-			setTagLine(storedRiotId.tagLine);
-		}
-		setPlatformState(getPlatform());
-	}, []);
-
 	const check = useCallback(async (name: string, tag: string, region: string) => {
 		if (!name || !tag) {
-			setError("Please enter both game name and tag line");
+			setError(t(locale).account.missing);
 			return;
 		}
 
@@ -190,8 +164,6 @@ export function LiveGame({ images }: LiveGameProps) {
 				return;
 			}
 
-			setRiotId({ gameName: name, tagLine: tag });
-			setPlatform(region);
 			setGame(data);
 			setLastChecked(Date.now());
 			enabledRef.current = true;
@@ -201,7 +173,7 @@ export function LiveGame({ images }: LiveGameProps) {
 		} finally {
 			setIsLoading(false);
 		}
-	}, []);
+	}, [locale]);
 
 	// Ticks the in-game clock and re-polls every POLL_MS once a check has run.
 	useEffect(() => {
@@ -234,7 +206,7 @@ export function LiveGame({ images }: LiveGameProps) {
 			}
 		};
 		poll();
-		const interval = setInterval(poll, 2000);
+		const interval = setInterval(poll, CHAMP_SELECT_POLL_MS);
 		return () => {
 			cancelled = true;
 			clearInterval(interval);
@@ -380,75 +352,13 @@ export function LiveGame({ images }: LiveGameProps) {
 
 	return (
 		<div className="space-y-6">
-			<div className="flex flex-col sm:flex-row gap-4 sm:items-end">
-				<div className="flex-1">
-					<label htmlFor="liveGameName" className="block text-sm font-medium mb-1">
-						Game Name
-					</label>
-					<input
-						type="text"
-						id="liveGameName"
-						value={gameName}
-						onChange={(e) => {
-							const val = e.target.value;
-							if (val.includes("#")) {
-								setGameName(val.replace("#", ""));
-								tagLineInputRef.current?.focus();
-							} else {
-								setGameName(val);
-							}
-						}}
-						className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-						placeholder="Enter game name"
-					/>
-				</div>
-				<div className="flex-1">
-					<label htmlFor="liveTagLine" className="block text-sm font-medium mb-1">
-						Tag Line
-					</label>
-					<div className="relative">
-						<span
-							className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
-							aria-hidden="true"
-						>
-							#
-						</span>
-						<input
-							ref={tagLineInputRef}
-							type="text"
-							id="liveTagLine"
-							value={tagLine}
-							onChange={(e) => setTagLine(e.target.value.replaceAll("#", ""))}
-							className="w-full pl-7 pr-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-							placeholder="Enter tag line"
-						/>
-					</div>
-				</div>
-				<div>
-					<label htmlFor="livePlatform" className="block text-sm font-medium mb-1">
-						Region
-					</label>
-					<select
-						id="livePlatform"
-						value={platform}
-						onChange={(e) => setPlatformState(e.target.value)}
-						className="h-[42px] px-3 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-					>
-						{PLATFORMS.map((p) => (
-							<option key={p.value} value={p.value}>
-								{p.label}
-							</option>
-						))}
-					</select>
-				</div>
-				<button
-					onClick={() => check(gameName, tagLine, platform)}
-					disabled={isLoading}
-					className="h-[42px] px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-				>
-					{isLoading ? "Checking..." : "Check"}
-				</button>
-			</div>
+			<button
+				onClick={() => check(gameName, tagLine, platform)}
+				disabled={isLoading || !isSet}
+				className="h-[42px] px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				{isLoading ? "Checking..." : "Check"}
+			</button>
 
 			{error && (
 				<div className="p-4 bg-red-100 text-red-700 rounded-md dark:bg-red-900 dark:text-red-100">

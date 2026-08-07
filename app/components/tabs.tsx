@@ -4,14 +4,24 @@ import { useState, useEffect } from "react";
 import { ImageGrid } from "./image-grid";
 import { MatchHistory } from "./match-history";
 import { Stats } from "./stats";
+import { LiveGame } from "./live-game";
+import { Challenges } from "./challenges";
+import { AccountBar, AccountProvider } from "./account";
 import { ImageTile } from "../lib/images";
+import { ChallengeGroup } from "../lib/challenges";
+import { Locale, t } from "../lib/i18n";
 import { checkStorageVersion } from "../lib/storage";
 
 interface TabsProps {
 	images: ImageTile[];
+	challengeGroups: ChallengeGroup[];
+	locale: Locale;
 }
 
-export function Tabs({ images }: TabsProps) {
+const TAB_IDS = ["tracker", "challenges", "history", "stats", "live"] as const;
+
+export function Tabs({ images, challengeGroups, locale }: TabsProps) {
+	const dict = t(locale);
 	const [activeTab, setActiveTab] = useState("tracker");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [showVersionModal, setShowVersionModal] = useState(false);
@@ -29,6 +39,7 @@ export function Tabs({ images }: TabsProps) {
 	);
 
 	return (
+		<AccountProvider>
 		<div className="w-full max-w-7xl mx-auto px-4">
 			{showVersionModal && (
 				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowVersionModal(false)}>
@@ -50,38 +61,27 @@ export function Tabs({ images }: TabsProps) {
 				</div>
 			)}
 
+			<div className="mb-6">
+				<AccountBar locale={locale} />
+			</div>
+
 			<div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-				<div className="flex gap-2">
-					<button
-						onClick={() => setActiveTab("tracker")}
-						className={`px-4 py-2 rounded-md transition-colors ${
-							activeTab === "tracker"
-								? "bg-blue-500 text-white"
-								: "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
-						}`}
-					>
-						Arena God Tracker
-					</button>
-					<button
-						onClick={() => setActiveTab("history")}
-						className={`px-4 py-2 rounded-md transition-colors ${
-							activeTab === "history"
-								? "bg-blue-500 text-white"
-								: "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
-						}`}
-					>
-						Match History
-					</button>
-					<button
-						onClick={() => setActiveTab("stats")}
-						className={`px-4 py-2 rounded-md transition-colors ${
-							activeTab === "stats"
-								? "bg-blue-500 text-white"
-								: "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
-						}`}
-					>
-						Stats
-					</button>
+				<div className="flex gap-2 flex-wrap" role="tablist">
+					{TAB_IDS.map((id) => (
+						<button
+							key={id}
+							role="tab"
+							aria-selected={activeTab === id}
+							onClick={() => setActiveTab(id)}
+							className={`px-4 py-2 rounded-md transition-colors ${
+								activeTab === id
+									? "bg-blue-500 text-white"
+									: "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+							}`}
+						>
+							{dict.tabs[id]}
+						</button>
+					))}
 				</div>
 				{activeTab === "tracker" && (
 					<div className="w-full sm:w-64">
@@ -100,13 +100,19 @@ export function Tabs({ images }: TabsProps) {
 				<div className={activeTab === "tracker" ? "" : "hidden"}>
 					<ImageGrid images={images} displayImages={filteredImages} />
 				</div>
+				<div className={activeTab === "challenges" ? "" : "hidden"}>
+					<Challenges groups={challengeGroups} locale={locale} />
+				</div>
 				<div className={activeTab === "history" ? "" : "hidden"}>
-					<MatchHistory images={images} />
+					<MatchHistory images={images} locale={locale} />
 				</div>
 				<div className={activeTab === "stats" ? "" : "hidden"}>
 					<Stats images={images} />
 				</div>
+				{/* Mounted only when active so the 30s poll stops when you leave the tab. */}
+				{activeTab === "live" && <LiveGame images={images} locale={locale} />}
 			</div>
 		</div>
+		</AccountProvider>
 	);
 }

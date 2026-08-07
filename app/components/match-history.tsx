@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { MatchResult, MatchInfo } from "../types";
 import {
-	getRiotId,
-	setRiotId,
 	getMatchHistory,
 	setMatchHistory,
 	cacheMatch,
@@ -17,6 +15,8 @@ import {
 	getMatchCache,
 } from "../lib/storage";
 import { ImageTile } from "../lib/images";
+import { Locale, t } from "../lib/i18n";
+import { useAccount } from "./account";
 
 const PLACEMENT_COLORS = {
 	1: "bg-yellow-500 dark:bg-yellow-600",
@@ -48,12 +48,12 @@ function formatEta(ms: number): string {
 
 interface MatchHistoryProps {
 	images: ImageTile[];
+	locale: Locale;
 }
 
-export function MatchHistory({ images }: MatchHistoryProps) {
-	const [gameName, setGameName] = useState("");
-	const [tagLine, setTagLine] = useState("");
-	const [tagLinePrefixActive, setTagLinePrefixActive] = useState(false);
+export function MatchHistory({ images, locale }: MatchHistoryProps) {
+	const { account, isSet, save: saveAccount } = useAccount();
+	const { gameName, tagLine } = account;
 	const [matchHistory, setMatchHistoryState] = useState<MatchResult[]>([]);
 	const [matchCache, setMatchCacheState] = useState<Record<string, MatchInfo>>({});
 	const [isLoading, setIsLoading] = useState(false);
@@ -79,15 +79,8 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 		activePuuidRef.current = puuid;
 	};
 	const abortControllerRef = useRef<AbortController | null>(null);
-	const tagLineInputRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
-		const storedRiotId = getRiotId();
-		if (storedRiotId) {
-			setGameName(storedRiotId.gameName);
-			setTagLine(storedRiotId.tagLine);
-			setTagLinePrefixActive(Boolean(storedRiotId.tagLine));
-		}
 		const puuid = getUserPuuid();
 		setActivePuuid(puuid);
 		const storedMatches = getMatchHistory(puuid);
@@ -98,8 +91,8 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 	}, []);
 
 	const handleStreamMatches = async () => {
-		if (!gameName || !tagLine) {
-			setError("Please enter both game name and tag line");
+		if (!isSet) {
+			setError(t(locale).account.missing);
 			return;
 		}
 
@@ -172,7 +165,9 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 							break;
 						case "account": {
 							const newPuuid = data.data.puuid;
-							setRiotId({
+							// Riot returns the canonical spelling; write it back so the account bar
+							// and every other tab show what Riot actually has.
+							saveAccount({
 								gameName: data.data.gameName,
 								tagLine: data.data.tagLine,
 							});
@@ -382,73 +377,13 @@ export function MatchHistory({ images }: MatchHistoryProps) {
 
 	return (
 		<div className="space-y-6">
-			<div className="flex flex-col sm:flex-row gap-4 sm:items-end">
-				<div className="flex-1">
-					<label
-						htmlFor="gameName"
-						className="block text-sm font-medium mb-1"
-					>
-						Game Name
-					</label>
-					<input
-						type="text"
-						id="gameName"
-						value={gameName}
-						onChange={(e) => {
-							const val = e.target.value;
-							if (val.includes("#")) {
-								setGameName(val.replace("#", ""));
-								tagLineInputRef.current?.focus();
-							} else {
-								setGameName(val);
-							}
-						}}
-						className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-						placeholder="Enter game name"
-					/>
-				</div>
-				<div className="flex-1">
-					<label
-						htmlFor="tagLine"
-						className="block text-sm font-medium mb-1"
-					>
-						Tag Line
-					</label>
-					<div className="relative">
-						<span
-							className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 ${
-								tagLinePrefixActive
-									? "text-gray-900 dark:text-gray-100"
-									: "text-gray-400 dark:text-gray-500"
-							}`}
-							aria-hidden="true"
-						>
-							#
-						</span>
-						<input
-							ref={tagLineInputRef}
-							type="text"
-							id="tagLine"
-							value={tagLine}
-							onChange={(e) => {
-								const raw = e.target.value;
-								setTagLinePrefixActive(raw.length > 0 || raw.includes("#"));
-								const sanitized = raw.replaceAll("#", "");
-								setTagLine(sanitized);
-							}}
-							className="w-full pl-7 pr-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-							placeholder="Enter tag line"
-						/>
-					</div>
-				</div>
-				<button
-					onClick={handleStreamMatches}
-					disabled={isLoading}
-					className="h-[42px] px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-				>
-					{isLoading ? "Updating..." : "Update"}
-				</button>
-			</div>
+			<button
+				onClick={handleStreamMatches}
+				disabled={isLoading || !isSet}
+				className="h-[42px] px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				{isLoading ? "Updating..." : "Update"}
+			</button>
 
 			{error && (
 				<div className="p-4 bg-red-100 text-red-700 rounded-md dark:bg-red-900 dark:text-red-100">

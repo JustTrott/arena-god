@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "ddragon.leagueoflegends.com",
       },
+      {
+        protocol: "https",
+        hostname: "blitz-cdn.blitz.gg",
+      },
     ],
   },
 };

@@ -3,24 +3,24 @@
 import { useEffect, useState } from "react";
 import { getChangelogSeen, setChangelogSeen } from "../lib/storage";
 
-const CHANGELOG_VERSION = 1;
+const CHANGELOG_VERSION = 2;
 
 const CHANGES = [
 	{
-		title: "3v3 Arena support",
-		body: "Matches from the new 3-team mode (queue 1750) are now fetched alongside the original 2v2 Arena.",
+		title: "Now called God Tracker",
+		body: "Same tracker, wider scope: Arena and ARAM. Your saved progress and match history are untouched.",
 	},
 	{
-		title: "Mode filter",
-		body: "Toggle between All / 2v2 / 3v3 on the Match History and Stats tabs.",
+		title: "Challenges tab",
+		body: "Every Arena and ARAM challenge on your account — level, value, next threshold, percentile and leaderboard rank.",
 	},
 	{
-		title: "Better duo stats",
-		body: "In 3-person teams, both teammates are now counted instead of just one.",
+		title: "Arena God vs. Riot's counter",
+		body: "The Arena God card compares what this tracker found with Riot's own challenge value, so you can see how many wins your match history no longer reaches.",
 	},
 	{
-		title: "Recover missing matches",
-		body: "Matches that were in your cache but not in history will now appear correctly when you click Update.",
+		title: "ARAM God clarified",
+		body: "ARAM's per-champion challenge needs an S- grade, not a win — and grades are not in the match API, so that number is read from the challenge directly.",
 	},
 ];
 
@@ -62,7 +62,7 @@ export function ChangelogPopup() {
 					<div>
 						<h2 className="text-xl font-bold">What&apos;s new</h2>
 						<p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-							Recent improvements to Arena God Tracker
+							Recent improvements to God Tracker
 						</p>
 					</div>
 					<button
